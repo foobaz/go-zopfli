@@ -136,7 +136,7 @@ func (leaves *symbolLeaves) Swap(i, j int) {
 // maxBits: Maximum bit length, inclusive.
 // bitLengths: Output, the bitlengths for the symbol prefix codes.
 // return: 0 for OK, non-0 for error.
-func LengthLimitedCodeLengths(frequencies []uint, maxBits int) []uint {
+func lengthLimitedCodeLengths(frequencies []uint, maxBits int) []uint {
 	n := len(frequencies)
 	// One leaf per symbol. Only numSymbols leaves will be used.
 	leaves := make(symbolLeaves, 0, n)

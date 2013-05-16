@@ -24,7 +24,7 @@ const (
 	HASH_MASK  = 32767
 )
 
-type Hash struct {
+type hash struct {
 	head    []int    // Hash value to index of its most recent occurance.
 	prev    []uint16 // Index to index of prev. occurance of same hash.
 	hashVal []int    // Index to hash value at this index.
@@ -43,7 +43,7 @@ type Hash struct {
 }
 
 // Allocates and initializes all fields of Hash.
-func NewHash() (h Hash) {
+func newHash(a, b byte) (h hash) {
 	h.head = make([]int, 65536)
 	h.prev = make([]uint16, WINDOW_SIZE)
 	h.hashVal = make([]int, WINDOW_SIZE)
@@ -72,19 +72,20 @@ func NewHash() (h Hash) {
 		}
 	}
 
+	h.warmup(a, b)
 	return h
 }
 
 // Update the sliding hash value with the given byte. All calls to this function
 // must be made on consecutive input characters. Since the hash value exists out
 // of multiple input bytes, a few warmups with this function are needed initially.
-func (h *Hash) updateValue(c byte) {
+func (h *hash) updateValue(c byte) {
 	h.val = ((h.val << HASH_SHIFT) ^ int(c)) & HASH_MASK
 }
 
 // Updates the hash values based on the current position in the array. All calls
 // to this must be made for consecutive bytes.
-func (h *Hash) Update(slice []byte, pos, end int) {
+func (h *hash) update(slice []byte, pos, end int) {
 	hPos := pos & WINDOW_MASK
 
 	var hashValue byte
@@ -128,7 +129,7 @@ func (h *Hash) Update(slice []byte, pos, end int) {
 // Prepopulates hash:
 // Fills in the initial values in the hash, before Update can be used
 // correctly.
-func (h *Hash) Warmup(a, b byte) {
+func (h *hash) warmup(a, b byte) {
 	h.updateValue(a)
 	h.updateValue(b)
 }

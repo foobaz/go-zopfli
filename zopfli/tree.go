@@ -24,7 +24,7 @@ import (
 )
 
 // Converts a series of Huffman tree bitLengths, to the bit values of the symbols.
-func LengthsToSymbols(lengths []uint, maxBits uint) (symbols []uint) {
+func lengthsToSymbols(lengths []uint, maxBits uint) (symbols []uint) {
 	n := len(lengths)
 	blCount := make([]uint, maxBits+1)
 	nextCode := make([]uint, maxBits+1)

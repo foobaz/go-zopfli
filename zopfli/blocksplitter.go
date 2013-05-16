@@ -195,7 +195,7 @@ func findLargestSplittableBlock(llSize int, done []bool, splitPoints []int) (lSt
 	return lStart, lEnd, found
 }
 
-func (store LZ77Store) BlockSplitLZ77(options *Options, maxBlocks int) []int {
+func (store LZ77Store) blockSplitLZ77(options *Options, maxBlocks int) []int {
 	llSize := len(store)
 	if llSize < 10 {
 		// This code fails on tiny files.
@@ -268,16 +268,13 @@ func (store LZ77Store) BlockSplitLZ77(options *Options, maxBlocks int) []int {
 // maxBlocks: maximum amount of blocks to split into, or 0 for no limit
 // splitPoints: dynamic array to put the resulting split point coordinates into.
 //   The coordinates are indices in the input array.
-func BlockSplit(options *Options, in []byte, inStart, inEnd, maxBlocks int) []int {
-	var s BlockState
-	s.options = options
-	s.blockStart = inStart
-	s.blockEnd = inEnd
+func blockSplit(options *Options, in []byte, inStart, inEnd, maxBlocks int) []int {
+	s := NewBlockState(options, in, inStart, inEnd)
 
 	// Unintuitively, using a simple LZ77 method here instead of LZ77Optimal
 	// results in better blocks.
-	store := s.LZ77Greedy(in, inStart, inEnd)
-	lz77SplitPoints := store.BlockSplitLZ77(options, maxBlocks)
+	store := s.LZ77Greedy(inStart, inEnd)
+	lz77SplitPoints := store.blockSplitLZ77(options, maxBlocks)
 
 	// Convert LZ77 positions to positions in the uncompressed input.
 	var splitPoints []int
@@ -308,7 +305,7 @@ func BlockSplit(options *Options, in []byte, inStart, inEnd, maxBlocks int) []in
 
 // Divides the input into equal blocks, does not even take LZ77 lengths into
 // account.
-func BlockSplitSimple(inStart, inEnd, blockSize int) (splitPoints []int) {
+func blockSplitSimple(inStart, inEnd, blockSize int) (splitPoints []int) {
 	i := inStart
 	for i < inEnd {
 		splitPoints = append(splitPoints, i)

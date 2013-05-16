@@ -246,8 +246,8 @@ func (z *Deflator) writeDynamicTree(lengths lz77Lengths) {
 	}
 
 	// Code length code lengths.
-	clcl := LengthLimitedCodeLengths(clCounts[:], 7)
-	clSymbols := LengthsToSymbols(clcl, 7)
+	clcl := lengthLimitedCodeLengths(clCounts[:], 7)
+	clSymbols := lengthsToSymbols(clcl, 7)
 
 	// Trim zeros.
 	hcLen := uint(15)
@@ -286,8 +286,8 @@ func (lengths lz77Lengths) calculateTreeSize() uint {
 }
 
 func (lengths lz77Lengths) symbols(maxBits uint) (symbols lz77Symbols) {
-	symbols.litLen = LengthsToSymbols(lengths.litLen, maxBits)
-	symbols.dist = LengthsToSymbols(lengths.dist, maxBits)
+	symbols.litLen = lengthsToSymbols(lengths.litLen, maxBits)
+	symbols.dist = lengthsToSymbols(lengths.dist, maxBits)
 	return symbols
 }
 
@@ -311,8 +311,8 @@ func (z *Deflator) writeLZ77Data(store LZ77Store,
 			z.writeHuffmanBits(symbols.litLen[pair.litLen], lengths.litLen[pair.litLen])
 			testLength++
 		} else {
-			lls := pair.LengthSymbol()
-			ds := pair.DistSymbol()
+			lls := pair.lengthSymbol()
+			ds := pair.distSymbol()
 			if pair.litLen < 3 || pair.litLen > 288 {
 				panic("litLen out of range")
 			}
@@ -323,9 +323,9 @@ func (z *Deflator) writeLZ77Data(store LZ77Store,
 				panic("length is zero")
 			}
 			z.writeHuffmanBits(symbols.litLen[lls], lengths.litLen[lls])
-			z.writeBits(uint(pair.LengthExtraBitsValue()), uint(pair.LengthExtraBits()))
+			z.writeBits(uint(pair.lengthExtraBitsValue()), uint(pair.lengthExtraBits()))
 			z.writeHuffmanBits(symbols.dist[ds], lengths.dist[ds])
-			z.writeBits(uint(pair.DistExtraBitsValue()), uint(pair.DistExtraBits()))
+			z.writeBits(uint(pair.distExtraBitsValue()), uint(pair.distExtraBits()))
 			testLength += int(pair.litLen)
 		}
 	}
@@ -363,10 +363,10 @@ func (store LZ77Store) calculateBlockSymbolSize(lengths lz77Lengths) uint64 {
 		if store[i].dist == 0 {
 			result += uint64(lengths.litLen[store[i].litLen])
 		} else {
-			result += uint64(lengths.litLen[store[i].LengthSymbol()])
-			result += uint64(lengths.dist[store[i].DistSymbol()])
-			result += uint64(store[i].LengthExtraBits())
-			result += uint64(store[i].DistExtraBits())
+			result += uint64(lengths.litLen[store[i].lengthSymbol()])
+			result += uint64(lengths.dist[store[i].distSymbol()])
+			result += uint64(store[i].lengthExtraBits())
+			result += uint64(store[i].distExtraBits())
 		}
 	}
 	result += uint64(lengths.litLen[256]) // end symbol
@@ -376,19 +376,19 @@ func (store LZ77Store) calculateBlockSymbolSize(lengths lz77Lengths) uint64 {
 // Calculates block size in bits.
 // litLens: lz77 lit/lengths
 // dists: ll77 distances
-func (store LZ77Store) CalculateBlockSize(bType byte) uint64 {
-	if bType != FIXED_BLOCK && bType != DYNAMIC_BLOCK {
+func (store LZ77Store) CalculateBlockSize(blockType byte) uint64 {
+	if blockType != FIXED_BLOCK && blockType != DYNAMIC_BLOCK {
 		panic("this is not for uncompressed blocks")
 	}
 
 	var lengths lz77Lengths
-	result := uint64(3) // bFinal and bType bits
-	if bType == FIXED_BLOCK {
+	result := uint64(3) // bFinal and blockType bits
+	if blockType == FIXED_BLOCK {
 		lengths = getFixedTree()
 	} else {
-		counts := store.LZ77Counts()
-		lengths.litLen = LengthLimitedCodeLengths(counts.litLen, 15)
-		lengths.dist = LengthLimitedCodeLengths(counts.dist, 15)
+		counts := store.lz77Counts()
+		lengths.litLen = lengthLimitedCodeLengths(counts.litLen, 15)
+		lengths.dist = lengthLimitedCodeLengths(counts.dist, 15)
 		lengths.patchDistanceCodesForBuggyDecoders()
 		result += uint64(lengths.calculateTreeSize())
 	}
@@ -399,32 +399,32 @@ func (store LZ77Store) CalculateBlockSize(bType byte) uint64 {
 
 // Adds a deflate block with the given LZ77 data to the output.
 // z: the stream to write to
-// btype: the block type, must be 1 or 2
+// blockType: the block type, must be 1 or 2
 // final: whether to set the "final" bit on this block, must be the last block
 // store: literal/length/distance array of the LZ77 data
 // expectedDataSize: the uncompressed block size, used for panic, but you can
 //   set it to 0 to not do the assertion.
-func (z *Deflator) writeLZ77Block(bType byte, final bool, store LZ77Store, expectedDataSize int) {
+func (z *Deflator) WriteLZ77Block(blockType byte, final bool, store LZ77Store, expectedDataSize int) {
 	var finalByte byte
 	if final {
 		finalByte = 1
 	}
 	z.writeBit(finalByte)
-	z.writeBit(bType & 1)
-	z.writeBit((bType & 2) >> 1)
+	z.writeBit(blockType & 1)
+	z.writeBit((blockType & 2) >> 1)
 
 	var lengths lz77Lengths
-	if bType == FIXED_BLOCK {
+	if blockType == FIXED_BLOCK {
 		// Fixed block.
 		lengths = getFixedTree()
 	} else {
 		// Dynamic block.
-		if bType != DYNAMIC_BLOCK {
+		if blockType != DYNAMIC_BLOCK {
 			panic("illegal block type")
 		}
-		counts := store.LZ77Counts()
-		lengths.litLen = LengthLimitedCodeLengths(counts.litLen, 15)
-		lengths.dist = LengthLimitedCodeLengths(counts.dist, 15)
+		counts := store.lz77Counts()
+		lengths.litLen = lengthLimitedCodeLengths(counts.litLen, 15)
+		lengths.dist = lengthLimitedCodeLengths(counts.dist, 15)
 		lengths.patchDistanceCodesForBuggyDecoders()
 		detectTreeSize := z.bp
 		z.writeDynamicTree(lengths)
@@ -489,48 +489,32 @@ func (z *Deflator) writeLZ77Block(bType byte, final bool, store LZ77Store, expec
 }
 
 func (z *Deflator) deflateDynamicBlock(final bool, in []byte, inStart, inEnd int) {
-	blockSize := inEnd - inStart
-
-	var s BlockState
-	s.options = z.options
-	s.blockStart = inStart
-	s.blockEnd = inEnd
-	if LONGEST_MATCH_CACHE {
-		s.lmc = NewCache(blockSize)
-	}
-
-	store := s.LZ77Optimal(in, inStart, inEnd)
+	s := NewBlockState(z.options, in, inStart, inEnd)
+	store := s.LZ77Optimal(inStart, inEnd)
 
 	// For small block, encoding with fixed tree can be smaller. For large block,
 	// don't bother doing this expensive test, dynamic tree will be better.
-	bType := byte(DYNAMIC_BLOCK)
+	blockType := byte(DYNAMIC_BLOCK)
 	if len(store) < 1000 {
-		fixedStore := s.LZ77OptimalFixed(in, inStart, inEnd)
+		fixedStore := s.LZ77OptimalFixed(inStart, inEnd)
 		dynCost := store.CalculateBlockSize(2)
 		fixedCost := fixedStore.CalculateBlockSize(1)
 		if fixedCost < dynCost {
-			bType = FIXED_BLOCK
+			blockType = FIXED_BLOCK
 			store = fixedStore
 		}
 	}
 
-	z.writeLZ77Block(bType, final, store, blockSize)
+	blockSize := inEnd - inStart
+	z.WriteLZ77Block(blockType, final, store, blockSize)
 }
 
 func (z *Deflator) deflateFixedBlock(final bool, in []byte, inStart, inEnd int) {
 	blockSize := inEnd - inStart
 
-	var s BlockState
-	s.options = z.options
-	s.blockStart = inStart
-	s.blockEnd = inEnd
-	if LONGEST_MATCH_CACHE {
-		s.lmc = NewCache(blockSize)
-	}
-
-	store := s.LZ77OptimalFixed(in, inStart, inEnd)
-
-	z.writeLZ77Block(FIXED_BLOCK, final, store, blockSize)
+	s := NewBlockState(z.options, in, inStart, inEnd)
+	store := s.LZ77OptimalFixed(inStart, inEnd)
+	z.WriteLZ77Block(FIXED_BLOCK, final, store, blockSize)
 }
 
 func (z *Deflator) deflateNonCompressedBlock(final bool, in []byte) {
@@ -545,7 +529,7 @@ func (z *Deflator) deflateNonCompressedBlock(final bool, in []byte) {
 		finalByte = 1
 	}
 	z.writeBit(finalByte)
-	// bType 00
+	// blockType 00
 	z.writeBit(0)
 	z.writeBit(0)
 	// Any bits of input up to the next byte boundary are ignored.
@@ -579,12 +563,12 @@ func (z *Deflator) deflateSplittingFirst(final bool, in []byte, inStart, inEnd i
 	var splitPoints []int
 	switch z.options.BlockType {
 	case UNCOMPRESSED_BLOCK:
-		splitPoints = BlockSplitSimple(inStart, inEnd, 65535)
+		splitPoints = blockSplitSimple(inStart, inEnd, 65535)
 	case FIXED_BLOCK:
 		// If all blocks are fixed tree, splitting into separate blocks only
 		// increases the total size. Leave splitPoints nil, this represents 1 block.
 	case DYNAMIC_BLOCK:
-		splitPoints = BlockSplit(z.options, in, inStart, inEnd, z.options.BlockSplittingMax)
+		splitPoints = blockSplit(z.options, in, inStart, inEnd, z.options.BlockSplittingMax)
 	}
 
 	nPoints := len(splitPoints)
@@ -608,40 +592,34 @@ func (z *Deflator) deflateSplittingFirst(final bool, in []byte, inStart, inEnd i
 // on that data, block splitting is done.
 // Parameters: see description of the Deflate function.
 func (z *Deflator) deflateSplittingLast(final bool, in []byte, inStart, inEnd int) {
-	bType := z.options.BlockType
-	if bType == UNCOMPRESSED_BLOCK {
+	blockType := z.options.BlockType
+	if blockType == UNCOMPRESSED_BLOCK {
 		// This function only supports LZ77 compression. deflateSplittingFirst
 		// supports the special case of noncompressed data. Punt it to that one.
 		z.deflateSplittingFirst(final, in, inStart, inEnd)
 		return
 	}
-	if bType != FIXED_BLOCK && bType != DYNAMIC_BLOCK {
+	if blockType != FIXED_BLOCK && blockType != DYNAMIC_BLOCK {
 		panic("illegal block type")
 	}
 
-	var s BlockState
-	s.options = z.options
-	s.blockStart = inStart
-	s.blockEnd = inEnd
-	if LONGEST_MATCH_CACHE {
-		s.lmc = NewCache(inEnd - inStart)
-	}
+	s := NewBlockState(z.options, in, inStart, inEnd)
 
 	var store LZ77Store
-	if bType == DYNAMIC_BLOCK {
-		store = s.LZ77Optimal(in, inStart, inEnd)
+	if blockType == DYNAMIC_BLOCK {
+		store = s.LZ77Optimal(inStart, inEnd)
 	} else {
-		if bType != FIXED_BLOCK {
+		if blockType != FIXED_BLOCK {
 			panic("illegal block type")
 		}
-		store = s.LZ77OptimalFixed(in, inStart, inEnd)
+		store = s.LZ77OptimalFixed(inStart, inEnd)
 	}
 
 	// If all blocks are fixed tree, splitting into separate blocks only
 	// increases the total size. Leave nPoints at 0, this represents 1 block.
 	var splitPoints []int
-	if bType != FIXED_BLOCK {
-		splitPoints = store.BlockSplitLZ77(z.options, z.options.BlockSplittingMax)
+	if blockType != FIXED_BLOCK {
+		splitPoints = store.blockSplitLZ77(z.options, z.options.BlockSplittingMax)
 	}
 
 	storeSize := len(store)
@@ -656,7 +634,7 @@ func (z *Deflator) deflateSplittingLast(final bool, in []byte, inStart, inEnd in
 		} else {
 			end = splitPoints[i]
 		}
-		z.writeLZ77Block(bType, i == nPoints && final, store[start:end], 0)
+		z.WriteLZ77Block(blockType, i == nPoints && final, store[start:end], 0)
 	}
 }
 

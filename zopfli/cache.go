@@ -25,14 +25,14 @@ package zopfli
 // the same position.
 // Uses large amounts of memory, since it has to remember the distance belonging
 // to every possible shorter-than-the-best length (the so called "sublen" array).
-type LongestMatchCache struct {
+type longestMatchCache struct {
 	store  LZ77Store
 	sublen []uint8
 	active bool
 }
 
 // Initialize a LongestMatchCache.
-func NewCache(blockSize int) (lmc LongestMatchCache) {
+func newCache(blockSize int) (lmc longestMatchCache) {
 	lmc.store = make(LZ77Store, blockSize)
 	// Rather large amount of memory.
 	lmc.sublen = make([]uint8, CACHE_LENGTH*3*blockSize)
@@ -48,7 +48,7 @@ func NewCache(blockSize int) (lmc LongestMatchCache) {
 }
 
 // Stores sublen array in the cache
-func (lmc LongestMatchCache) SublenToCache(sublen []uint16,
+func (lmc longestMatchCache) sublenToCache(sublen []uint16,
 	pos int, length uint16) {
 	var j, bestLength uint16
 
@@ -82,13 +82,13 @@ func (lmc LongestMatchCache) SublenToCache(sublen []uint16,
 			panic("impossible length")
 		}
 	}
-	if bestLength != lmc.MaxCachedSublen(pos) {
+	if bestLength != lmc.maxCachedSublen(pos) {
 		panic("didn't cache sublen")
 	}
 }
 
 // Extracts sublen array from the cache.
-func (lmc LongestMatchCache) CacheToSublen(pos int, length uint16, sublen []uint16) {
+func (lmc longestMatchCache) cacheToSublen(pos int, length uint16, sublen []uint16) {
 	if CACHE_LENGTH == 0 {
 		return
 	}
@@ -98,7 +98,7 @@ func (lmc LongestMatchCache) CacheToSublen(pos int, length uint16, sublen []uint
 	}
 
 	var prevLength uint16
-	maxLength := lmc.MaxCachedSublen(pos)
+	maxLength := lmc.maxCachedSublen(pos)
 	cache := CACHE_LENGTH * pos * 3
 	for j := 0; j < CACHE_LENGTH; j++ {
 		length = uint16(lmc.sublen[cache+j*3]) + 3
@@ -114,7 +114,7 @@ func (lmc LongestMatchCache) CacheToSublen(pos int, length uint16, sublen []uint
 }
 
 // Returns the length up to which could be stored in the cache.
-func (lmc LongestMatchCache) MaxCachedSublen(pos int) uint16 {
+func (lmc longestMatchCache) maxCachedSublen(pos int) uint16 {
 	if CACHE_LENGTH == 0 {
 		return 0
 	}

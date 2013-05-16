@@ -85,7 +85,7 @@ const (
 )
 
 // Gets the amount of extra bits for the given dist, cfr. the DEFLATE spec.
-func (pair LZ77Pair) DistExtraBits() uint16 {
+func (pair lz77Pair) distExtraBits() uint16 {
 	dist := pair.dist
 	if dist < 5 {
 		return 0
@@ -118,7 +118,7 @@ func (pair LZ77Pair) DistExtraBits() uint16 {
 }
 
 // Gets value of the extra bits for the given dist, cfr. the DEFLATE spec.
-func (pair LZ77Pair) DistExtraBitsValue() uint16 {
+func (pair lz77Pair) distExtraBitsValue() uint16 {
 	dist := pair.dist
 	switch {
 	case dist < 5:
@@ -152,7 +152,7 @@ func (pair LZ77Pair) DistExtraBitsValue() uint16 {
 }
 
 // Gets the symbol for the given dist, cfr. the DEFLATE spec.
-func (pair LZ77Pair) DistSymbol() uint16 {
+func (pair lz77Pair) distSymbol() uint16 {
 	dist := pair.dist
 	if dist < 193 {
 		if dist < 13 {
@@ -241,7 +241,7 @@ var lengthExtraBitsTable [259]uint16 = [259]uint16{
 }
 
 // Gets the amount of extra bits for the given length, cfr. the DEFLATE spec.
-func (pair LZ77Pair) LengthExtraBits() uint16 {
+func (pair lz77Pair) lengthExtraBits() uint16 {
 	return lengthExtraBitsTable[pair.litLen]
 }
 
@@ -261,7 +261,7 @@ var lengthExtraBitsValueTable [259]uint16 = [259]uint16{
 }
 
 // Gets value of the extra bits for the given length, cfr. the DEFLATE spec.
-func (pair LZ77Pair) LengthExtraBitsValue() uint16 {
+func (pair lz77Pair) lengthExtraBitsValue() uint16 {
 	return lengthExtraBitsValueTable[pair.litLen]
 }
 
@@ -302,7 +302,7 @@ var lengthSymbolTable [259]uint16 = [259]uint16{
 
 // Gets the symbol for the given length, cfr. the DEFLATE spec.
 // Returns the symbol in the range [257-285] (inclusive)
-func (pair LZ77Pair) LengthSymbol() uint16 {
+func (pair lz77Pair) lengthSymbol() uint16 {
 	return lengthSymbolTable[pair.litLen]
 }
 

@@ -22,7 +22,7 @@ package zopfli
 // litLen: Contains the literal symbol or length value.
 // dists: Indicates the distance, or 0 to indicate that there is no distance and
 //   litLens contains a literal instead of a length.
-type LZ77Pair struct {
+type lz77Pair struct {
 	// Lit or len.
 	litLen uint16
 
@@ -32,29 +32,24 @@ type LZ77Pair struct {
 }
 
 // Stores lit/length and dist pairs for LZ77.
-type LZ77Store []LZ77Pair
+type LZ77Store []lz77Pair
 
 // Some state information for compressing a block.
 // This is currently a bit under-used (with mainly only the longest match cache),
 // but is kept for easy future expansion.
 type BlockState struct {
 	options *Options
-
-	// Cache for length/distance pairs found so far.
-	lmc LongestMatchCache
+	block []byte
 
 	// The start (inclusive) and end (not inclusive) of the current block.
 	blockStart, blockEnd int
+
+	// Cache for length/distance pairs found so far.
+	lmc longestMatchCache
 }
 
-type LZ77Counts struct {
+type lz77Counts struct {
 	litLen, dist []uint
-}
-
-func (source LZ77Store) Copy() (dest LZ77Store) {
-	dest = make(LZ77Store, len(source))
-	copy(dest, source)
-	return dest
 }
 
 // Gets a score of the length given the distance. Typically, the score of the
@@ -76,7 +71,7 @@ func (source LZ77Store) Copy() (dest LZ77Store) {
 //  rather unpredictable way
 // -the first zopfli run, so it affects the chance of the first run being closer
 //  to the optimal output
-func (pair LZ77Pair) lengthScore() uint16 {
+func (pair lz77Pair) lengthScore() uint16 {
 	// At 1024, the distance uses 9+ extra bits and this seems to be the
 	// sweet spot on tested files.
 	if pair.dist > 1024 {
@@ -86,7 +81,7 @@ func (pair LZ77Pair) lengthScore() uint16 {
 }
 
 // Verifies if length and dist are indeed valid, only used for assertion.
-func (pair LZ77Pair) Verify(data []byte, pos int) {
+func (pair lz77Pair) Verify(data []byte, pos int) {
 
 	// TODO(lode): make this only run in a debug compile, it's for assert only.
 
@@ -116,11 +111,23 @@ func getMatch(slice []byte, scan, match, end int) int {
 	return scan
 }
 
+func NewBlockState(options *Options, in []byte, inStart, inEnd int) (s BlockState) {
+	s.options = options
+	s.block = in
+	s.blockStart = inStart
+	s.blockEnd = inEnd
+	if LONGEST_MATCH_CACHE {
+		blockSize := inEnd - inStart
+		s.lmc = newCache(blockSize)
+	}
+	return s
+}
+
 // Gets distance, length and sublen values from the cache if possible.
 // Returns 1 if it got the values from the cache, 0 if not.
 // Updates the limit value to a smaller one if possible with more limited
 // information from the cache.
-func (s *BlockState) tryGetFromLongestMatchCache(pos int, limit *uint16, sublen []uint16) (pair LZ77Pair, ok bool) {
+func (s *BlockState) tryGetFromLongestMatchCache(pos int, limit *uint16, sublen []uint16) (pair lz77Pair, ok bool) {
 	// The LMC cache starts at the beginning of the block rather than the
 	// beginning of the whole array.
 	lmcPos := pos - s.blockStart
@@ -130,17 +137,17 @@ func (s *BlockState) tryGetFromLongestMatchCache(pos int, limit *uint16, sublen 
 	cacheAvailable := s.lmc.active && (s.lmc.store[lmcPos].litLen == 0 || s.lmc.store[lmcPos].dist != 0)
 	var maxSublen uint16
 	if cacheAvailable && sublen != nil {
-		maxSublen = s.lmc.MaxCachedSublen(lmcPos)
+		maxSublen = s.lmc.maxCachedSublen(lmcPos)
 	}
 	limitOkForCache := cacheAvailable && (*limit == MAX_MATCH || s.lmc.store[lmcPos].litLen <= *limit || (sublen != nil && maxSublen >= *limit))
 	if s.lmc.active && limitOkForCache && cacheAvailable {
-		if sublen == nil || s.lmc.store[lmcPos].litLen <= s.lmc.MaxCachedSublen(lmcPos) {
+		if sublen == nil || s.lmc.store[lmcPos].litLen <= s.lmc.maxCachedSublen(lmcPos) {
 			pair.litLen = s.lmc.store[lmcPos].litLen
 			if pair.litLen > *limit {
 				pair.litLen = *limit
 			}
 			if sublen != nil {
-				s.lmc.CacheToSublen(lmcPos, pair.litLen, sublen)
+				s.lmc.cacheToSublen(lmcPos, pair.litLen, sublen)
 				pair.dist = sublen[pair.litLen]
 				if *limit == MAX_MATCH && pair.litLen >= MIN_MATCH {
 					if pair.dist != s.lmc.store[lmcPos].dist {
@@ -163,7 +170,7 @@ func (s *BlockState) tryGetFromLongestMatchCache(pos int, limit *uint16, sublen 
 // Stores the found sublen, distance and length in the longest match cache, if
 // possible.
 func (s *BlockState) storeInLongestMatchCache(pos int, limit uint16,
-	sublen []uint16, pair LZ77Pair) {
+	sublen []uint16, pair lz77Pair) {
 	if !s.lmc.active {
 		return
 	}
@@ -188,7 +195,7 @@ func (s *BlockState) storeInLongestMatchCache(pos int, limit uint16,
 		panic("overrun")
 	}
 	if pair.litLen < MIN_MATCH {
-		lmcPair = LZ77Pair{}
+		lmcPair = lz77Pair{}
 	} else {
 		lmcPair = pair
 	}
@@ -196,26 +203,31 @@ func (s *BlockState) storeInLongestMatchCache(pos int, limit uint16,
 	if lmcPair.litLen == 1 && lmcPair.dist == 0 {
 		panic("cached invalid combination")
 	}
-	s.lmc.SublenToCache(sublen, lmcPos, pair.litLen)
+	s.lmc.sublenToCache(sublen, lmcPos, pair.litLen)
 }
 
 // Finds the longest match (length and corresponding distance) for LZ77
 // compression.
 // Even when not using "sublen", it can be more efficient to provide an array,
 // because only then the caching is used.
-// array: the data
+//
+// slice: the data
+//
 // pos: position in the data to find the match for
+//
 // size: size of the data
+//
 // limit: limit length to maximum this value (default should be 258). This allows
-//     finding a shorter dist for that length (= less extra bits). Must be
-//     in the range [MIN_MATCH, MAX_MATCH].
+// finding a shorter dist for that length (= less extra bits). Must be
+// in the range [MIN_MATCH, MAX_MATCH].
+//
 // sublen: output array of 259 elements, or null. Has, for each length, the
-//     smallest distance required to reach this length. Only 256 of its 259 values
-//     are used, the first 3 are ignored (the shortest length is 3. It is purely
-//     for convenience that the array is made 3 longer).
-func (s *BlockState) FindLongestMatch(h *Hash, slice []byte, pos, size int, limit uint16, sublen []uint16) LZ77Pair {
+// smallest distance required to reach this length. Only 256 of its 259 values
+// are used, the first 3 are ignored (the shortest length is 3. It is purely
+// for convenience that the array is made 3 longer).
+func (s *BlockState) findLongestMatch(h *hash, slice []byte, pos, size int, limit uint16, sublen []uint16) lz77Pair {
 	hPos := uint16(pos & WINDOW_MASK)
-	bestPair := LZ77Pair{1, 0}
+	bestPair := lz77Pair{1, 0}
 	chainCounter := MAX_CHAIN_HITS // For quitting early.
 	hPrev := h.prev
 
@@ -243,7 +255,7 @@ func (s *BlockState) FindLongestMatch(h *Hash, slice []byte, pos, size int, limi
 	if size < pos+MIN_MATCH {
 		// The rest of the code assumes there are at least MIN_MATCH
 		// bytes to try.
-		return LZ77Pair{}
+		return lz77Pair{}
 	}
 
 	if pos+int(limit) > size {
@@ -307,7 +319,7 @@ func (s *BlockState) FindLongestMatch(h *Hash, slice []byte, pos, size int, limi
 						sublen[j] = uint16(dist)
 					}
 				}
-				bestPair = LZ77Pair{currentLength, uint16(dist)}
+				bestPair = lz77Pair{currentLength, uint16(dist)}
 				if currentLength >= limit {
 					break
 				}
@@ -361,31 +373,30 @@ func (s *BlockState) FindLongestMatch(h *Hash, slice []byte, pos, size int, limi
 // The result is placed in the LZ77Store.
 // If inStart is larger than 0, it uses values before inStart as starting
 // dictionary.
-func (s *BlockState) LZ77Greedy(in []byte, inStart, inEnd int) (store LZ77Store) {
+func (s *BlockState) LZ77Greedy(inStart, inEnd int) (store LZ77Store) {
 	var windowStart int
 	if inStart > WINDOW_SIZE {
 		windowStart = inStart - WINDOW_SIZE
 	}
 
 	// Lazy matching.
-	var prevPair LZ77Pair
+	var prevPair lz77Pair
 	var matchAvailable bool
 
 	if inStart == inEnd {
 		return
 	}
 
-	h := NewHash()
-	h.Warmup(in[windowStart], in[windowStart+1])
+	h := newHash(s.block[windowStart], s.block[windowStart+1])
 	for i := windowStart; i < inStart; i++ {
-		h.Update(in, i, inEnd)
+		h.update(s.block, i, inEnd)
 	}
 
 	dummySublen := make([]uint16, 259)
 	for i := inStart; i < inEnd; i++ {
-		h.Update(in, i, inEnd)
+		h.update(s.block, i, inEnd)
 
-		pair := s.FindLongestMatch(&h, in, i, inEnd, MAX_MATCH, dummySublen[:])
+		pair := s.findLongestMatch(&h, s.block, i, inEnd, MAX_MATCH, dummySublen[:])
 		lengthScore := pair.lengthScore()
 
 		if LAZY_MATCHING {
@@ -394,7 +405,7 @@ func (s *BlockState) LZ77Greedy(in []byte, inStart, inEnd int) (store LZ77Store)
 			if matchAvailable {
 				matchAvailable = false
 				if lengthScore > prevLengthScore+1 {
-					store = append(store, LZ77Pair{uint16(in[i-1]), 0})
+					store = append(store, lz77Pair{uint16(s.block[i-1]), 0})
 					if lengthScore >= MIN_MATCH && pair.litLen < MAX_MATCH {
 						matchAvailable = true
 						prevPair = pair
@@ -405,14 +416,14 @@ func (s *BlockState) LZ77Greedy(in []byte, inStart, inEnd int) (store LZ77Store)
 					pair = prevPair
 					lengthScore = prevLengthScore
 					// Add to output.
-					pair.Verify(in, i-1)
+					pair.Verify(s.block, i-1)
 					store = append(store, pair)
 					for j := uint16(2); j < pair.litLen; j++ {
 						if i >= inEnd {
 							panic("overrun")
 						}
 						i++
-						h.Update(in, i, inEnd)
+						h.update(s.block, i, inEnd)
 					}
 					continue
 				}
@@ -426,18 +437,18 @@ func (s *BlockState) LZ77Greedy(in []byte, inStart, inEnd int) (store LZ77Store)
 
 		// Add to output.
 		if lengthScore >= MIN_MATCH {
-			pair.Verify(in, i)
+			pair.Verify(s.block, i)
 			store = append(store, pair)
 		} else {
 			pair.litLen = 1
-			store = append(store, LZ77Pair{uint16(in[i]), 0})
+			store = append(store, lz77Pair{uint16(s.block[i]), 0})
 		}
 		for j := uint16(1); j < pair.litLen; j++ {
 			if i >= inEnd {
 				panic("overrun")
 			}
 			i++
-			h.Update(in, i, inEnd)
+			h.update(s.block, i, inEnd)
 		}
 	}
 	return store
@@ -452,7 +463,7 @@ func (s *BlockState) LZ77Greedy(in []byte, inStart, inEnd int) (store LZ77Store)
 // llCount: count of each lit/len symbol, must have size 288 (see deflate
 //     standard)
 // dCount: count of each dist symbol, must have size 32 (see deflate standard)
-func (store LZ77Store) LZ77Counts() (counts LZ77Counts) {
+func (store LZ77Store) lz77Counts() (counts lz77Counts) {
 	counts.litLen = make([]uint, 288)
 	counts.dist = make([]uint, 32)
 	end := len(store)
@@ -461,8 +472,8 @@ func (store LZ77Store) LZ77Counts() (counts LZ77Counts) {
 		if pair.dist == 0 {
 			counts.litLen[pair.litLen]++
 		} else {
-			counts.litLen[pair.LengthSymbol()]++
-			counts.dist[pair.DistSymbol()]++
+			counts.litLen[pair.lengthSymbol()]++
+			counts.dist[pair.distSymbol()]++
 		}
 	}
 

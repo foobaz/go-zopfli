@@ -90,20 +90,20 @@ func (stats symbolStats) randomizeFreqs(state ranState) {
 
 // Function that calculates a cost based on a model for the given LZ77 symbol.
 // litlen: means literal symbol if dist is 0, length otherwise.
-type costModelFun func(pair LZ77Pair, context interface{}) float64
+type costModelFun func(pair lz77Pair, context interface{}) float64
 
 // Cost model which should exactly match fixed tree.
 // type: costModelFun
-func costFixed(pair LZ77Pair, unused interface{}) float64 {
+func costFixed(pair lz77Pair, unused interface{}) float64 {
 	if pair.dist == 0 {
 		if pair.litLen <= 143 {
 			return 8
 		}
 		return 9
 	}
-	dBits := pair.DistExtraBits()
-	lBits := pair.LengthExtraBits()
-	lSym := pair.LengthSymbol()
+	dBits := pair.distExtraBits()
+	lBits := pair.lengthExtraBits()
+	lSym := pair.lengthSymbol()
 	cost := float64(5) // Every dist symbol has length 5.
 	if lSym <= 279 {
 		cost += 7
@@ -115,15 +115,15 @@ func costFixed(pair LZ77Pair, unused interface{}) float64 {
 
 // Cost model based on symbol statistics.
 // type: costModelFun
-func costStat(pair LZ77Pair, context interface{}) float64 {
-	stats := context.(*symbolStats)
+func costStat(pair lz77Pair, context interface{}) float64 {
+	stats := context.(symbolStats)
 	if pair.dist == 0 {
 		return stats.llSymbols[pair.litLen]
 	}
-	lSym := pair.LengthSymbol()
-	lBits := pair.LengthExtraBits()
-	dSym := pair.DistSymbol()
-	dBits := pair.DistExtraBits()
+	lSym := pair.lengthSymbol()
+	lBits := pair.lengthExtraBits()
+	dSym := pair.distSymbol()
+	dBits := pair.distExtraBits()
 	return stats.llSymbols[lSym] + float64(lBits) + stats.dSymbols[dSym] + float64(dBits)
 }
 
@@ -137,14 +137,13 @@ var dSymbolTable [30]uint16 = [30]uint16{
 func (costModel costModelFun) minCost(costContext interface{}) float64 {
 	var minCost float64
 
-	var bestPair LZ77Pair // pair that has lowest cost in the cost model
-
 	// Table of distances that have a different distance symbol in the deflate
 	// specification. Each value is the first distance that has a new symbol. Only
 	// different symbols affect the cost model so only these need to be checked.
 	// See RFC 1951 section 3.2.5. Compressed blocks (length and distance codes).
 
-	var pair LZ77Pair
+	// bestPair has lowest cost in the cost model
+	var bestPair, pair lz77Pair
 	pair.dist = 1
 	minCost = math.Inf(1)
 	for pair.litLen = uint16(3); pair.litLen < 259; pair.litLen++ {
@@ -173,14 +172,13 @@ func (costModel costModelFun) minCost(costContext interface{}) float64 {
 // Performs the forward pass for "squeeze". Gets the most optimal length to reach
 // every byte from a previous byte, using cost calculations.
 // s: the BlockState
-// in: the input data slice
 // inStart: where to start
 // inEnd: where to stop (not inclusive)
 // costModel: function to calculate the cost of some lit/len/dist pair.
 // costContext: abstract context for the costmodel function
 // lengths: output slice of size (inEnd - instart) which will receive the best length to reach this byte from a previous byte.
 // returns the cost that was, according to the costmodel, needed to get to the end.
-func (s *BlockState) bestLengths(in []byte, inStart, inEnd int, costModel costModelFun, costContext interface{}) (lengths []uint16) {
+func (s *BlockState) bestLengths(inStart, inEnd int, costModel costModelFun, costContext interface{}) (lengths []uint16) {
 	// Best cost to get here so far.
 	if inStart == inEnd {
 		return nil
@@ -194,10 +192,9 @@ func (s *BlockState) bestLengths(in []byte, inStart, inEnd int, costModel costMo
 	if inStart > WINDOW_SIZE {
 		windowStart = inStart - WINDOW_SIZE
 	}
-	h := NewHash()
-	h.Warmup(in[windowStart], in[windowStart+1])
+	h := newHash(s.block[windowStart], s.block[windowStart+1])
 	for i := windowStart; i < inStart; i++ {
-		h.Update(in, i, inEnd)
+		h.update(s.block, i, inEnd)
 	}
 
 	minCost := costModel.minCost(costContext)
@@ -209,7 +206,7 @@ func (s *BlockState) bestLengths(in []byte, inStart, inEnd int, costModel costMo
 	sublen := make([]uint16, 259)
 	for i := inStart; i < inEnd; i++ {
 		j := i - inStart // Index in the costs slice and lengths.
-		h.Update(in, i, inEnd)
+		h.update(s.block, i, inEnd)
 		cost := costs[j]
 
 		if SHORTCUT_LONG_REPETITIONS {
@@ -219,27 +216,27 @@ func (s *BlockState) bestLengths(in []byte, inStart, inEnd int, costModel costMo
 				i > inStart+MAX_MATCH+1 &&
 				i+MAX_MATCH*2+1 < inEnd &&
 				h.same[(i-MAX_MATCH)&WINDOW_MASK] > MAX_MATCH {
-				symbolCost := costModel(LZ77Pair{MAX_MATCH, 1}, costContext)
+				symbolCost := costModel(lz77Pair{MAX_MATCH, 1}, costContext)
 				// Set the length to reach each one to MAX_MATCH, and the cost
 				// to the cost corresponding to that length. Doing this, we
-				// skip MAX_MATCH values to avoid calling FindLongestMatch.
+				// skip MAX_MATCH values to avoid calling findLongestMatch.
 				for k := 0; k < MAX_MATCH; k++ {
 					costs[j+MAX_MATCH] = cost + symbolCost
 					lengths[j+MAX_MATCH] = MAX_MATCH
 					i++
 					j++
-					h.Update(in, i, inEnd)
+					h.update(s.block, i, inEnd)
 					cost = costs[j]
 				}
 			}
 		}
 
-		pair := s.FindLongestMatch(&h, in, i, inEnd, MAX_MATCH, sublen)
+		pair := s.findLongestMatch(&h, s.block, i, inEnd, MAX_MATCH, sublen)
 		leng := pair.litLen
 
 		// Literal.
 		if i+1 <= inEnd {
-			newCost := cost + costModel(LZ77Pair{uint16(in[i]), 0}, costContext)
+			newCost := cost + costModel(lz77Pair{uint16(s.block[i]), 0}, costContext)
 			if !(newCost >= 0) {
 				panic("new cost is not positive")
 			}
@@ -257,7 +254,7 @@ func (s *BlockState) bestLengths(in []byte, inStart, inEnd int, costModel costMo
 				continue
 			}
 
-			newCost := cost + costModel(LZ77Pair{k, sublen[k]}, costContext)
+			newCost := cost + costModel(lz77Pair{k, sublen[k]}, costContext)
 			if !(newCost >= 0) {
 				panic("new cost is not positive")
 			}
@@ -321,7 +318,7 @@ func traceBackwards(size int, lengths []uint16) []uint16 {
 	return path
 }
 
-func (s *BlockState) followPath(in []byte, inStart, inEnd int,
+func (s *BlockState) followPath(inStart, inEnd int,
 	path []uint16) LZ77Store {
 	var store LZ77Store
 	if inStart == inEnd {
@@ -332,10 +329,9 @@ func (s *BlockState) followPath(in []byte, inStart, inEnd int,
 	if inStart > WINDOW_SIZE {
 		windowStart = inStart - WINDOW_SIZE
 	}
-	h := NewHash()
-	h.Warmup(in[windowStart], in[windowStart+1])
+	h := newHash(s.block[windowStart], s.block[windowStart+1])
 	for i := windowStart; i < inStart; i++ {
-		h.Update(in, i, inEnd)
+		h.update(s.block, i, inEnd)
 	}
 
 	pos := inStart
@@ -344,28 +340,28 @@ func (s *BlockState) followPath(in []byte, inStart, inEnd int,
 			panic("position overrun")
 		}
 
-		h.Update(in, pos, inEnd)
+		h.update(s.block, pos, inEnd)
 
 		// Add to output.
 		if length >= MIN_MATCH {
 			// Get the distance by recalculating longest match. The
 			// found length should match the length from the path.
-			pair := s.FindLongestMatch(&h, in, pos, inEnd, length, nil)
+			pair := s.findLongestMatch(&h, s.block, pos, inEnd, length, nil)
 			if pair.litLen != length && length > 2 && pair.litLen > 2 {
 				panic("dummy length is invalid")
 			}
-			pair.Verify(in, pos)
+			pair.Verify(s.block, pos)
 			store = append(store, pair)
 		} else {
 			length = 1
-			store = append(store, LZ77Pair{uint16(in[pos]), 0})
+			store = append(store, lz77Pair{uint16(s.block[pos]), 0})
 		}
 
 		if pos+int(length) > inEnd {
 			panic("position overrun")
 		}
 		for j := 1; j < int(length); j++ {
-			h.Update(in, pos+j, inEnd)
+			h.update(s.block, pos+j, inEnd)
 		}
 
 		pos += int(length)
@@ -388,8 +384,8 @@ func (store LZ77Store) statistics() (stats symbolStats) {
 		if store[i].dist == 0 {
 			stats.litLens[store[i].litLen]++
 		} else {
-			stats.litLens[store[i].LengthSymbol()]++
-			stats.dists[store[i].DistSymbol()]++
+			stats.litLens[store[i].lengthSymbol()]++
+			stats.dists[store[i].distSymbol()]++
 		}
 	}
 	stats.litLens[256] = 1 // End symbol.
@@ -402,7 +398,6 @@ func (store LZ77Store) statistics() (stats symbolStats) {
 // with updated statistics should be performed.
 //
 // s: the block state
-// in: the input data slice
 // inStart: where to start
 // inEnd: where to stop (not inclusive)
 // lengths: slice of size (inEnd - inStart) used to store lengths
@@ -411,23 +406,22 @@ func (store LZ77Store) statistics() (stats symbolStats) {
 // store: place to output the LZ77 data
 // returns the cost that was, according to the costmodel, needed to get to the end.
 // This is not the actual cost.
-func (s *BlockState) lz77OptimalRun(in []byte, inStart, inEnd int, costModel costModelFun, costContext interface{}) (store LZ77Store) {
-	lengths := s.bestLengths(in, inStart, inEnd, costModel, costContext)
+func (s *BlockState) lz77OptimalRun(inStart, inEnd int, costModel costModelFun, costContext interface{}) (store LZ77Store) {
+	lengths := s.bestLengths(inStart, inEnd, costModel, costContext)
 	path := traceBackwards(inEnd-inStart, lengths)
-	store = s.followPath(in, inStart, inEnd, path)
+	store = s.followPath(inStart, inEnd, path)
 	return store
 }
 
 // Calculates lit/len and dist pairs for given data.
 // If instart is larger than 0, it uses values before instart as starting
 // dictionary.
-func (s *BlockState) LZ77Optimal(in []byte, inStart, inEnd int) (store LZ77Store) {
+func (s *BlockState) LZ77Optimal(inStart, inEnd int) LZ77Store {
 	// Dist to get to here with smallest cost.
-	var stats, bestStats, lastStats symbolStats
 	bestCost := uint64(math.MaxUint64)
 	var lastCost uint64
 	// Try randomizing the costs a bit once the size stabilizes.
-	lastRandomStep := -1
+	var randomize bool
 
 	ranState := newRanState()
 
@@ -435,41 +429,43 @@ func (s *BlockState) LZ77Optimal(in []byte, inStart, inEnd int) (store LZ77Store
 	// runs, each time using the statistics of the previous run.
 
 	// Initial run.
-	currentStore := s.LZ77Greedy(in, inStart, inEnd)
-	stats = currentStore.statistics()
+	bestStore := s.LZ77Greedy(inStart, inEnd)
+	bestStats := bestStore.statistics()
+	lastStats := bestStats
 
 	// Repeat statistics with each time the cost model
 	// from the previous stat run.
 	for i := 0; i < s.options.NumIterations; i++ {
-		currentStore := s.lz77OptimalRun(in, inStart, inEnd, costStat, &stats)
-		cost := currentStore.CalculateBlockSize(2)
+		store := s.lz77OptimalRun(inStart, inEnd, costStat, lastStats)
+		cost := store.CalculateBlockSize(2)
 		if s.options.VerboseMore || (s.options.Verbose && cost < bestCost) {
 			fmt.Fprintf(os.Stderr, "Iteration %d: %d bit\n", i, int(cost))
 		}
+		stats := store.statistics()
 		if cost < bestCost {
 			// Copy to the output store.
-			store = currentStore.Copy()
+			bestStore = store
 			bestStats = stats
 			bestCost = cost
 		}
-		lastStats = stats
-		stats = currentStore.statistics()
-		if lastRandomStep != -1 {
-			// This makes it converge slower but better. Do it only once the
-			// randomness kicks in so that if the user does few iterations, it gives a
-			// better result sooner.
-			stats = addWeightedFreqs(stats, 1.0, lastStats, 0.5)
-			stats.calculate()
-		}
 		if i > 5 && cost == lastCost {
-			stats = bestStats
-			stats.randomizeFreqs(ranState)
-			stats.calculate()
-			lastRandomStep = i
+			lastStats = bestStats
+			lastStats.randomizeFreqs(ranState)
+			lastStats.calculate()
+			randomize = true
+		} else {
+			if randomize {
+				// This makes it converge slower but better. Do it only once the
+				// randomness kicks in so that if the user does few iterations, it gives a
+				// better result sooner.
+				stats = addWeightedFreqs(stats, 1.0, lastStats, 0.5)
+				stats.calculate()
+			}
+			lastStats = stats
 		}
 		lastCost = cost
 	}
-	return store
+	return bestStore
 }
 
 // Does the same as LZ77Optimal, but optimized for the fixed tree of the
@@ -480,9 +476,9 @@ func (s *BlockState) LZ77Optimal(in []byte, inStart, inEnd int) (store LZ77Store
 // using with a fixed tree.
 // If inStart is larger than 0, it uses values before inStart as starting
 // dictionary.
-func (s *BlockState) LZ77OptimalFixed(in []byte, inStart, inEnd int) LZ77Store {
+func (s *BlockState) LZ77OptimalFixed(inStart, inEnd int) LZ77Store {
 	// Dist to get to here with smallest cost.
 	// Shortest path for fixed tree This one should give the shortest possible
 	// result for fixed tree, no repeated runs are needed since the tree is known.
-	return s.lz77OptimalRun(in, inStart, inEnd, costFixed, 0)
+	return s.lz77OptimalRun(inStart, inEnd, costFixed, nil)
 }
