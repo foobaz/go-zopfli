@@ -27,14 +27,18 @@ decompressor.
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"github.com/foobaz/go-zopfli/zopfli"
 	"io"
 	"io/ioutil"
 	"os"
+	"runtime"
 	"runtime/pprof"
 )
+
+var parallel bool
 
 // outfilename: filename to write output to, or 0 to write to stdout instead
 func compressFile(options *zopfli.Options, outputType int,
@@ -56,9 +60,54 @@ func compressFile(options *zopfli.Options, outputType int,
 		defer out.Close()
 	}
 
-	compressErr := zopfli.Compress(options, outputType, in, out)
-	if compressErr != nil {
-		return compressErr
+	nJobs := 1
+	if parallel {
+		nJobs = runtime.GOMAXPROCS(-1)
+	}
+	chunk := len(in) / nJobs
+	type job struct {
+		in	[]byte
+		w    *bytes.Buffer
+		err  error
+		done chan struct{}
+	}
+	jobs := make([]job, nJobs)
+
+	offset := 0
+	for jbnum := 0; jbnum < nJobs; jbnum++ {
+		end := offset + chunk
+		if end > len(in) {
+			end = len(in)
+		}
+
+		jobs[jbnum].in = in[offset:end]
+		jobs[jbnum].w = new(bytes.Buffer)
+		jobs[jbnum].done = make(chan struct{})
+
+		go func(j *job) {
+			j.err = zopfli.Compress(options, outputType, j.in, j.w)
+			close(j.done)
+		}(&jobs[jbnum])
+
+		offset += chunk
+	}
+
+	// Collect the output, concatenate into the output io.Writer
+	// gzip file format supports concatenation transparently:
+	// https://www.gnu.org/software/gzip/manual/gzip.html#Advanced-usage
+	for i := range jobs {
+		// Note: It seems like the above could be "for _,j := range jobs",
+		// but that would be a data race, because j.err would have an old value
+		// when we wake up from sleeping on done. Instead, use an array index
+		// so that each access to jobs[i] respects the happens-before ordering.
+		<-jobs[i].done
+		if jobs[i].err != nil {
+			return jobs[i].err
+		}
+		_, err := io.Copy(out, jobs[i].w)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -77,7 +126,13 @@ func main() {
 	flag.IntVar(&options.NumIterations, "i", options.NumIterations, "perform # iterations (default 15). More gives more compression but is slower. Examples: -i=10, -i=50, -i=1000")
 	var cpuProfile string
 	flag.StringVar(&cpuProfile, "cpuprofile", "", "write cpu profile to file")
+	flag.BoolVar(&parallel, "parallel", false, "compress in parallel (gzip only); use GOMAXPROCS to set the amount of parallelism. More parallelism = smaller independent chunks, thus worse compression ratio.")
 	flag.Parse()
+
+	if parallel && !*gzip {
+		fmt.Fprintf(os.Stderr, "Error: parallel is only supported with gzip containers.")
+		return
+	}
 
 	if options.VerboseMore {
 		options.Verbose = true
