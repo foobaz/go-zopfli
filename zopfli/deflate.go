@@ -686,7 +686,11 @@ func (z *Deflator) Deflate(final bool, in []byte) (err error) {
 		}
 	}()
 
-	if MASTER_BLOCK_SIZE == 0 {
+	// Zero-length inputs must pass through z.DeflatePart
+	// at least once in order to be flushed correctly. On the
+	// other size of this if, the for loop is skipped entirely for
+	// len(in) == 0.
+	if MASTER_BLOCK_SIZE == 0 || len(in) == 0 {
 		err := z.DeflatePart(true, in, 0, len(in))
 		if err != nil {
 			return err
