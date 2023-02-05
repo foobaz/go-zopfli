@@ -30,19 +30,22 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/foobaz/go-zopfli/zopfli"
 	"io"
 	"io/ioutil"
 	"os"
 	"runtime"
 	"runtime/pprof"
+
+	"github.com/kislerdm/diagramastext/core/go-zopfli/zopfli"
 )
 
 var parallel bool
 
 // outfilename: filename to write output to, or 0 to write to stdout instead
-func compressFile(options *zopfli.Options, outputType int,
-	inFileName, outFileName string) error {
+func compressFile(
+	options *zopfli.Options, outputType int,
+	inFileName, outFileName string,
+) error {
 	in, inErr := ioutil.ReadFile(inFileName)
 	if inErr != nil {
 		return inErr
@@ -66,7 +69,7 @@ func compressFile(options *zopfli.Options, outputType int,
 	}
 	chunk := len(in) / nJobs
 	type job struct {
-		in	[]byte
+		in   []byte
 		w    *bytes.Buffer
 		err  error
 		done chan struct{}
@@ -122,11 +125,20 @@ func main() {
 	deflate := flag.Bool("deflate", false, "output to deflate format instead of gzip")
 	zlib := flag.Bool("zlib", false, "output to zlib format instead of gzip")
 	gzip := flag.Bool("gzip", true, "output to gzip format")
-	flag.BoolVar(&options.BlockSplittingLast, "splitlast", options.BlockSplittingLast, "do block splitting last instead of first")
-	flag.IntVar(&options.NumIterations, "i", options.NumIterations, "perform # iterations (default 15). More gives more compression but is slower. Examples: -i=10, -i=50, -i=1000")
+	flag.BoolVar(
+		&options.BlockSplittingLast, "splitlast", options.BlockSplittingLast,
+		"do block splitting last instead of first",
+	)
+	flag.IntVar(
+		&options.NumIterations, "i", options.NumIterations,
+		"perform # iterations (default 15). More gives more compression but is slower. Examples: -i=10, -i=50, -i=1000",
+	)
 	var cpuProfile string
 	flag.StringVar(&cpuProfile, "cpuprofile", "", "write cpu profile to file")
-	flag.BoolVar(&parallel, "parallel", false, "compress in parallel (gzip only); use GOMAXPROCS to set the amount of parallelism. More parallelism = smaller independent chunks, thus worse compression ratio.")
+	flag.BoolVar(
+		&parallel, "parallel", false,
+		"compress in parallel (gzip only); use GOMAXPROCS to set the amount of parallelism. More parallelism = smaller independent chunks, thus worse compression ratio.",
+	)
 	flag.Parse()
 
 	if parallel && !*gzip {
