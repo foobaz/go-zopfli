@@ -180,7 +180,11 @@ func (costModel costModelFun) minCost(costContext interface{}) float64 {
 // returns the cost that was, according to the costmodel, needed to get to the end.
 func (s *BlockState) bestLengths(inStart, inEnd int, costModel costModelFun, costContext interface{}) (lengths []uint16) {
 	// Best cost to get here so far.
-	if inStart == inEnd {
+	var windowStart int
+	if inStart > WINDOW_SIZE {
+		windowStart = inStart - WINDOW_SIZE
+	}
+	if windowStart+1 >= len(s.block) {
 		return nil
 	}
 
@@ -188,10 +192,6 @@ func (s *BlockState) bestLengths(inStart, inEnd int, costModel costModelFun, cos
 	lengths = make([]uint16, blockSize+1)
 	costs := make([]float64, blockSize+1)
 
-	var windowStart int
-	if inStart > WINDOW_SIZE {
-		windowStart = inStart - WINDOW_SIZE
-	}
 	h := newHash(s.block[windowStart], s.block[windowStart+1])
 	for i := windowStart; i < inStart; i++ {
 		h.update(s.block, i, inEnd)
@@ -286,7 +286,7 @@ func (s *BlockState) bestLengths(inStart, inEnd int, costModel costModelFun, cos
 // byte. The path will be filled with the lengths to use, so its data size will be
 // the amount of lz77 symbols.
 func traceBackwards(size int, lengths []uint16) []uint16 {
-	if size == 0 {
+	if size == 0 || len(lengths) == 0 {
 		return nil
 	}
 
@@ -321,14 +321,23 @@ func traceBackwards(size int, lengths []uint16) []uint16 {
 func (s *BlockState) followPath(inStart, inEnd int,
 	path []uint16) LZ77Store {
 	var store LZ77Store
-	if inStart == inEnd {
-		return store
-	}
-
 	var windowStart int
 	if inStart > WINDOW_SIZE {
 		windowStart = inStart - WINDOW_SIZE
 	}
+
+	// For 0-length input.
+	if inStart == inEnd {
+		return store
+	}
+
+	// This happens when len(s.block)==1, so return the
+	// entire input (the one byte) as one literal.
+	if windowStart+1 >= len(s.block) {
+		store = append(store, lz77Pair{uint16(s.block[inStart]), 0})
+		return store
+	}
+
 	h := newHash(s.block[windowStart], s.block[windowStart+1])
 	for i := windowStart; i < inStart; i++ {
 		h.update(s.block, i, inEnd)

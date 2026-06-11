@@ -39,7 +39,7 @@ type LZ77Store []lz77Pair
 // but is kept for easy future expansion.
 type BlockState struct {
 	options *Options
-	block []byte
+	block   []byte
 
 	// The start (inclusive) and end (not inclusive) of the current block.
 	blockStart, blockEnd int
@@ -371,8 +371,8 @@ func (s *BlockState) findLongestMatch(h *hash, slice []byte, pos, size int, limi
 // Does LZ77 using an algorithm similar to gzip, with lazy matching, rather than
 // with the slow but better "squeeze" implementation.
 // The result is placed in the LZ77Store.
-// If inStart is larger than 0, it uses values before inStart as starting
-// dictionary.
+// If inStart is larger than WINDOW_SIZE, it uses values before inStart
+// as a starting dictionary.
 func (s *BlockState) LZ77Greedy(inStart, inEnd int) (store LZ77Store) {
 	var windowStart int
 	if inStart > WINDOW_SIZE {
@@ -383,7 +383,7 @@ func (s *BlockState) LZ77Greedy(inStart, inEnd int) (store LZ77Store) {
 	var prevPair lz77Pair
 	var matchAvailable bool
 
-	if inStart == inEnd {
+	if windowStart+1 >= len(s.block) {
 		return
 	}
 
